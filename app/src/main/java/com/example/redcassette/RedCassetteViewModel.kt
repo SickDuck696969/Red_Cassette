@@ -10,6 +10,8 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -28,7 +30,6 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
     private val sharedPrefs = application.getSharedPreferences("RedCassettePrefs", Context.MODE_PRIVATE)
     private val dao = AppDatabase.getDatabase(application).playlistDao()
 
-    // --- TRẠNG THÁI UI & TÍNH NĂNG ---
     val isPlaying = MutableStateFlow(false)
     val currentSongTitle = MutableStateFlow("Chưa có bài hát nào")
     val progress = MutableStateFlow(0f)
@@ -36,12 +37,15 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
     val isShuffle = MutableStateFlow(false)
     val repeatMode = MutableStateFlow(RepeatMode.OFF)
 
-    // --- CÀI ĐẶT ỨNG DỤNG ---
+    // --- CÀI ĐẶT MÀU SẮC & GIAO DIỆN ---
+    // Sử dụng Int và key mới "themeColorInt" để chống lỗi ClassCastException (Crash app)
+    val appThemeColor = MutableStateFlow(sharedPrefs.getInt("themeColorInt", Color(0xFFB71C1C).toArgb()))
+
     val rootFolderUri = MutableStateFlow(sharedPrefs.getString("rootFolderUri", null))
     val appBackgroundUri = MutableStateFlow(sharedPrefs.getString("appBgUri", null))
     val cassetteLabelUri = MutableStateFlow(sharedPrefs.getString("cassetteLabelUri", null))
+    val playlistBackgroundUri = MutableStateFlow(sharedPrefs.getString("playlistBgUri", null))
 
-    // --- PLAYLIST & DANH SÁCH CHỜ (QUEUE) ---
     val currentPlaylistName = MutableStateFlow<String?>("Thư mục gốc")
     val allPlaylists = MutableStateFlow<List<Playlist>>(emptyList())
     val selectedPlaylist = MutableStateFlow<Playlist?>(null)
@@ -51,12 +55,11 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
     val currentSongIndexFlow = MutableStateFlow(-1)
 
     private var playbackSongs = listOf<Song>()
-
-    // --- AUDIO ---
     private var mediaPlayer: MediaPlayer? = null
     private var currentSongIndex = -1
     private var progressJob: Job? = null
 
+    // Bộ lắng nghe sự kiện rút tai nghe
     private val noisyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
@@ -89,8 +92,13 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
                 }
             }
         }
-
         restorePlaybackState()
+    }
+
+    // Hàm thay đổi và lưu màu an toàn
+    fun setAppThemeColor(colorInt: Int) {
+        appThemeColor.value = colorInt
+        sharedPrefs.edit().putInt("themeColorInt", colorInt).apply()
     }
 
     private fun savePlaybackState() {
@@ -114,6 +122,17 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
                 val idx = playbackSongs.indexOfFirst { it.uri.toString() == lastUri }.takeIf { it != -1 } ?: 0
                 withContext(Dispatchers.Main) {
                     if (playbackSongs.isNotEmpty()) playSong(idx, autoPlay = false)
+                }
+            }
+            // Quét ngầm Thư mục gốc khi đang mở bằng Playlist
+            rootFolderUri.value?.let { uriString ->
+                viewModelScope.launch(Dispatchers.IO) {
+                    val context = getApplication<Application>()
+                    try {
+                        val folder = DocumentFile.fromTreeUri(context, Uri.parse(uriString))
+                        val mp3Files = folder?.listFiles()?.filter { it.name?.lowercase()?.endsWith(".mp3") == true || it.type == "audio/mpeg" } ?: emptyList()
+                        rootSongs.value = mp3Files.map { Song(uri = it.uri, title = it.name?.removeSuffix(".mp3") ?: "Unknown Song") }
+                    } catch (e: Exception) { e.printStackTrace() }
                 }
             }
         } else {
@@ -291,6 +310,7 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
     }
     fun setAppBackground(uri: String?) { appBackgroundUri.value = uri; sharedPrefs.edit().putString("appBgUri", uri).apply() }
     fun setCassetteLabelUri(uri: String?) { cassetteLabelUri.value = uri; sharedPrefs.edit().putString("cassetteLabelUri", uri).apply(); updateNotification(isPlaying.value) }
+    fun setPlaylistBackgroundUri(uri: String?) { playlistBackgroundUri.value = uri; sharedPrefs.edit().putString("playlistBgUri", uri).apply() }
 
     fun createPlaylist(name: String, selectedUris: List<String>) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -314,10 +334,15 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
     fun selectPlaylist(playlist: Playlist?) {
         if (playlist == null || selectedPlaylist.value?.id == playlist?.id) {
             selectedPlaylist.value = null; currentPlaylistName.value = "Thư mục gốc"
-            playbackSongs = rootSongs.value
-            currentPlaybackList.value = rootSongs.value
-            savePlaybackState()
-            if (playbackSongs.isNotEmpty()) playSong(0) else { mediaPlayer?.stop(); isPlaying.value = false; updateNotification(false) }
+
+            if (rootSongs.value.isEmpty() && rootFolderUri.value != null) {
+                scanRootFolder(rootFolderUri.value!!, autoPlay = true)
+            } else {
+                playbackSongs = rootSongs.value
+                currentPlaybackList.value = rootSongs.value
+                savePlaybackState()
+                if (playbackSongs.isNotEmpty()) playSong(0) else { mediaPlayer?.stop(); isPlaying.value = false; updateNotification(false) }
+            }
         } else {
             selectedPlaylist.value = playlist; currentPlaylistName.value = playlist.name
             loadPlaylistAndPlay(playlist)
