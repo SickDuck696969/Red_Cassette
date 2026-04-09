@@ -1,8 +1,11 @@
 package com.example.redcassette
 
 import android.app.Application
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
@@ -25,6 +28,7 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
     private val sharedPrefs = application.getSharedPreferences("RedCassettePrefs", Context.MODE_PRIVATE)
     private val dao = AppDatabase.getDatabase(application).playlistDao()
 
+    // --- TRẠNG THÁI UI & TÍNH NĂNG ---
     val isPlaying = MutableStateFlow(false)
     val currentSongTitle = MutableStateFlow("Chưa có bài hát nào")
     val progress = MutableStateFlow(0f)
@@ -32,35 +36,89 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
     val isShuffle = MutableStateFlow(false)
     val repeatMode = MutableStateFlow(RepeatMode.OFF)
 
+    // --- CÀI ĐẶT ỨNG DỤNG ---
     val rootFolderUri = MutableStateFlow(sharedPrefs.getString("rootFolderUri", null))
     val appBackgroundUri = MutableStateFlow(sharedPrefs.getString("appBgUri", null))
     val cassetteLabelUri = MutableStateFlow(sharedPrefs.getString("cassetteLabelUri", null))
 
+    // --- PLAYLIST & DANH SÁCH CHỜ (QUEUE) ---
     val currentPlaylistName = MutableStateFlow<String?>("Thư mục gốc")
     val allPlaylists = MutableStateFlow<List<Playlist>>(emptyList())
     val selectedPlaylist = MutableStateFlow<Playlist?>(null)
 
     val rootSongs = MutableStateFlow<List<Song>>(emptyList())
+    val currentPlaybackList = MutableStateFlow<List<Song>>(emptyList())
+    val currentSongIndexFlow = MutableStateFlow(-1)
+
     private var playbackSongs = listOf<Song>()
 
+    // --- AUDIO ---
     private var mediaPlayer: MediaPlayer? = null
     private var currentSongIndex = -1
     private var progressJob: Job? = null
+
+    private val noisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                if (isPlaying.value) togglePlayPause()
+            }
+        }
+    }
 
     init {
         AudioController.onPlayPause = { togglePlayPause() }
         AudioController.onNext = { nextSong() }
         AudioController.onPrev = { prevSong() }
-
-        // Nhận lệnh tua từ thanh thông báo
         AudioController.onSeekTo = { pos ->
             mediaPlayer?.seekTo(pos.toInt())
             progress.value = pos.toFloat() / (mediaPlayer?.duration ?: 1).toFloat()
             updateNotification(isPlaying.value)
         }
 
-        viewModelScope.launch(Dispatchers.IO) { dao.getAllPlaylists().collectLatest { allPlaylists.value = it } }
-        rootFolderUri.value?.let { scanRootFolder(it, autoPlay = false) }
+        application.registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
+
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.getAllPlaylists().collectLatest { playlists ->
+                allPlaylists.value = playlists
+                val lastPid = sharedPrefs.getInt("lastPlaylistId", -1)
+                if (lastPid != -1 && selectedPlaylist.value == null) {
+                    playlists.find { it.id == lastPid }?.let {
+                        selectedPlaylist.value = it
+                        currentPlaylistName.value = it.name
+                    }
+                }
+            }
+        }
+
+        restorePlaybackState()
+    }
+
+    private fun savePlaybackState() {
+        val currentUri = if (currentSongIndex in playbackSongs.indices) playbackSongs[currentSongIndex].uri.toString() else null
+        sharedPrefs.edit()
+            .putInt("lastPlaylistId", selectedPlaylist.value?.id ?: -1)
+            .putString("lastSongUri", currentUri)
+            .apply()
+    }
+
+    private fun restorePlaybackState() {
+        val lastPid = sharedPrefs.getInt("lastPlaylistId", -1)
+        val lastUri = sharedPrefs.getString("lastSongUri", null)
+
+        if (lastPid != -1) {
+            viewModelScope.launch(Dispatchers.IO) {
+                val pSongs = dao.getSongsForPlaylist(lastPid)
+                playbackSongs = pSongs.map { Song(Uri.parse(it.uri), it.title) }
+                currentPlaybackList.value = playbackSongs
+
+                val idx = playbackSongs.indexOfFirst { it.uri.toString() == lastUri }.takeIf { it != -1 } ?: 0
+                withContext(Dispatchers.Main) {
+                    if (playbackSongs.isNotEmpty()) playSong(idx, autoPlay = false)
+                }
+            }
+        } else {
+            rootFolderUri.value?.let { scanRootFolder(it, autoPlay = false, targetUri = lastUri) }
+        }
     }
 
     private fun updateNotification(playing: Boolean) {
@@ -73,7 +131,7 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
             putExtra("IS_PLAYING", playing)
             putExtra("DURATION", duration)
             putExtra("POSITION", position)
-            putExtra("LABEL_URI", cassetteLabelUri.value) // Gửi hình ảnh qua
+            putExtra("LABEL_URI", cassetteLabelUri.value)
         }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) getApplication<Application>().startForegroundService(intent)
@@ -81,7 +139,7 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
         } catch (e: Exception) { e.printStackTrace() }
     }
 
-    private fun scanRootFolder(uriString: String, autoPlay: Boolean = true) {
+    private fun scanRootFolder(uriString: String, autoPlay: Boolean = true, targetUri: String? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
             try {
@@ -92,25 +150,32 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
 
                 if (selectedPlaylist.value == null) {
                     playbackSongs = songs
+                    currentPlaybackList.value = songs
+                    val idx = if (targetUri != null) songs.indexOfFirst { it.uri.toString() == targetUri }.takeIf { it != -1 } ?: 0 else 0
+
                     withContext(Dispatchers.Main) {
-                        if (playbackSongs.isNotEmpty()) { if (autoPlay) playSong(0) else { currentSongTitle.value = playbackSongs[0].title; currentSongIndex = 0 } }
-                        else { currentSongTitle.value = "Thư mục trống!" }
+                        if (playbackSongs.isNotEmpty()) playSong(idx, autoPlay)
+                        else currentSongTitle.value = "Thư mục trống!"
                     }
                 }
             } catch (e: Exception) { e.printStackTrace() }
         }
     }
 
-    private fun playSong(index: Int) {
+    fun playSong(index: Int, autoPlay: Boolean = true) {
         if (playbackSongs.isEmpty() || index !in playbackSongs.indices) return
         currentSongIndex = index
+        currentSongIndexFlow.value = index
         val song = playbackSongs[index]
         currentSongTitle.value = song.title
+
+        savePlaybackState()
 
         isPlaying.value = false
         updateNotification(false)
 
         mediaPlayer?.release()
+
         try {
             mediaPlayer = MediaPlayer().apply {
                 setAudioAttributes(
@@ -123,37 +188,31 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
                 try { setWakeMode(getApplication(), PowerManager.PARTIAL_WAKE_LOCK) }
                 catch (e: Exception) { e.printStackTrace() }
 
-                // --- THUẬT TOÁN CHỐNG KHỰNG NHẠC KHI CHẠY NỀN ---
                 val contentResolver = getApplication<Application>().contentResolver
                 try {
-                    // Cắm "ống hút" trực tiếp vào file nhạc (FileDescriptor)
                     val parcelFileDescriptor = contentResolver.openFileDescriptor(song.uri, "r")
                     if (parcelFileDescriptor != null) {
                         setDataSource(parcelFileDescriptor.fileDescriptor)
-                        // Bắt buộc phải đóng ống hút lại ngay sau khi MediaPlayer đã kết nối thành công để tránh tràn RAM
                         parcelFileDescriptor.close()
-                    } else {
-                        setDataSource(getApplication(), song.uri) // Dự phòng nếu file bị lỗi
-                    }
+                    } else setDataSource(getApplication(), song.uri)
                 } catch (e: Exception) {
                     e.printStackTrace()
                     setDataSource(getApplication(), song.uri)
                 }
-                // ------------------------------------------------
 
                 setOnPreparedListener { mp ->
-                    mp.start()
-                    this@RedCassetteViewModel.isPlaying.value = true
-                    updateNotification(true)
-                    startProgressTracker()
+                    if (autoPlay) {
+                        mp.start()
+                        this@RedCassetteViewModel.isPlaying.value = true
+                        updateNotification(true)
+                        startProgressTracker()
+                    } else {
+                        progress.value = 0f
+                    }
                 }
 
                 setOnCompletionListener { handleSongEnd() }
-
-                setOnErrorListener { _, what, extra ->
-                    viewModelScope.launch { delay(1000); nextSong() }
-                    true
-                }
+                setOnErrorListener { _, _, _ -> viewModelScope.launch { delay(1000); nextSong() }; true }
 
                 prepareAsync()
             }
@@ -176,19 +235,29 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
         mediaPlayer?.let {
             if (it.isPlaying) { it.pause(); isPlaying.value = false; updateNotification(false) }
             else { it.start(); isPlaying.value = true; updateNotification(true); startProgressTracker() }
-        } ?: run { if (playbackSongs.isNotEmpty()) playSong(0) }
+        } ?: run { if (playbackSongs.isNotEmpty()) playSong(currentSongIndex.takeIf { it != -1 } ?: 0) }
     }
 
     fun nextSong() {
         if (playbackSongs.isEmpty()) return
-        val nextIdx = if (isShuffle.value) playbackSongs.indices.random() else (currentSongIndex + 1) % playbackSongs.size
+        val nextIdx = if (isShuffle.value && playbackSongs.size > 1) {
+            var randomIdx: Int
+            do { randomIdx = playbackSongs.indices.random() } while (randomIdx == currentSongIndex)
+            randomIdx
+        } else {
+            (currentSongIndex + 1) % playbackSongs.size
+        }
         playSong(nextIdx)
     }
 
     fun prevSong() {
         if (playbackSongs.isEmpty()) return
         if (mediaPlayer != null && mediaPlayer!!.currentPosition > 3000) { mediaPlayer!!.seekTo(0); return }
-        val prevIdx = if (isShuffle.value) playbackSongs.indices.random() else if (currentSongIndex - 1 < 0) playbackSongs.size - 1 else currentSongIndex - 1
+        val prevIdx = if (isShuffle.value && playbackSongs.size > 1) {
+            var randomIdx: Int
+            do { randomIdx = playbackSongs.indices.random() } while (randomIdx == currentSongIndex)
+            randomIdx
+        } else if (currentSongIndex - 1 < 0) playbackSongs.size - 1 else currentSongIndex - 1
         playSong(prevIdx)
     }
 
@@ -196,7 +265,7 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
         mediaPlayer?.let {
             it.seekTo((it.duration * fraction).toInt())
             progress.value = fraction
-            updateNotification(isPlaying.value) // Đồng bộ thanh Slider trên thông báo
+            updateNotification(isPlaying.value)
         }
     }
     fun toggleShuffle() { isShuffle.value = !isShuffle.value }
@@ -212,9 +281,16 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    fun setRootFolder(uri: String) { rootFolderUri.value = uri; sharedPrefs.edit().putString("rootFolderUri", uri).apply(); if (selectedPlaylist.value == null) currentPlaylistName.value = "Thư mục gốc"; scanRootFolder(uri, autoPlay = true) }
+    fun setRootFolder(uri: String) {
+        rootFolderUri.value = uri
+        sharedPrefs.edit().putString("rootFolderUri", uri).apply()
+        if (selectedPlaylist.value == null) {
+            currentPlaylistName.value = "Thư mục gốc"
+            scanRootFolder(uri, autoPlay = true)
+        }
+    }
     fun setAppBackground(uri: String?) { appBackgroundUri.value = uri; sharedPrefs.edit().putString("appBgUri", uri).apply() }
-    fun setCassetteLabelUri(uri: String?) { cassetteLabelUri.value = uri; sharedPrefs.edit().putString("cassetteLabelUri", uri).apply() }
+    fun setCassetteLabelUri(uri: String?) { cassetteLabelUri.value = uri; sharedPrefs.edit().putString("cassetteLabelUri", uri).apply(); updateNotification(isPlaying.value) }
 
     fun createPlaylist(name: String, selectedUris: List<String>) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -237,10 +313,14 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
 
     fun selectPlaylist(playlist: Playlist?) {
         if (playlist == null || selectedPlaylist.value?.id == playlist?.id) {
-            selectedPlaylist.value = null; currentPlaylistName.value = "Thư mục gốc"; playbackSongs = rootSongs.value
+            selectedPlaylist.value = null; currentPlaylistName.value = "Thư mục gốc"
+            playbackSongs = rootSongs.value
+            currentPlaybackList.value = rootSongs.value
+            savePlaybackState()
             if (playbackSongs.isNotEmpty()) playSong(0) else { mediaPlayer?.stop(); isPlaying.value = false; updateNotification(false) }
         } else {
-            selectedPlaylist.value = playlist; currentPlaylistName.value = playlist.name; loadPlaylistAndPlay(playlist)
+            selectedPlaylist.value = playlist; currentPlaylistName.value = playlist.name
+            loadPlaylistAndPlay(playlist)
         }
     }
 
@@ -248,6 +328,8 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch(Dispatchers.IO) {
             val pSongs = dao.getSongsForPlaylist(playlist.id)
             playbackSongs = pSongs.map { Song(Uri.parse(it.uri), it.title) }
+            currentPlaybackList.value = playbackSongs
+            savePlaybackState()
             withContext(Dispatchers.Main) { if (playbackSongs.isNotEmpty()) playSong(0) else { mediaPlayer?.stop(); isPlaying.value = false; currentSongTitle.value = "Playlist trống!"; updateNotification(false) } }
         }
     }
@@ -258,7 +340,8 @@ class RedCassetteViewModel(application: Application) : AndroidViewModel(applicat
         super.onCleared()
         mediaPlayer?.release()
         progressJob?.cancel()
-        // Tắt dịch vụ thông báo khi app bị huỷ hoàn toàn
+        getApplication<Application>().unregisterReceiver(noisyReceiver)
+
         val intent = Intent(getApplication(), CassetteService::class.java).apply { action = "STOP_SERVICE" }
         getApplication<Application>().startService(intent)
     }

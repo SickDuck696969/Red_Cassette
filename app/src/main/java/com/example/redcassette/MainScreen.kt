@@ -21,10 +21,12 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -42,6 +44,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -81,9 +84,13 @@ fun MainScreen(viewModel: RedCassetteViewModel) {
     val cassetteLabelUri by viewModel.cassetteLabelUri.collectAsState()
     val labelBitmap = rememberImageBitmap(cassetteLabelUri)
 
+    // Trạng thái cho Queue
+    val playbackList by viewModel.currentPlaybackList.collectAsState()
+    val currentSongIndex by viewModel.currentSongIndexFlow.collectAsState()
+    var showQueueBottomSheet by remember { mutableStateOf(false) }
+
     var showSettings by remember { mutableStateOf(false) }
 
-    // Xin quyền hiển thị Thông báo (Cho Android 13+)
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -109,7 +116,8 @@ fun MainScreen(viewModel: RedCassetteViewModel) {
                     )
 
                     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                        CassetteTape(isPlaying = isPlaying, labelBitmap = labelBitmap)
+
+                        CassetteTape(isPlaying = isPlaying, progress = progress, labelBitmap = labelBitmap)
 
                         Spacer(modifier = Modifier.height(48.dp))
                         Text(text = currentSongTitle, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
@@ -123,6 +131,7 @@ fun MainScreen(viewModel: RedCassetteViewModel) {
                         )
                         Spacer(modifier = Modifier.height(24.dp))
 
+                        // Hàng Nút Điều Khiển Nhạc
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { viewModel.toggleShuffle() }) { Icon(Icons.Default.Shuffle, contentDescription = "Shuffle", tint = if (isShuffle) RedHoodCrimson else MetalGray, modifier = Modifier.size(28.dp)) }
                             IconButton(onClick = { viewModel.prevSong() }) { Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", tint = Color.White, modifier = Modifier.size(40.dp)) }
@@ -134,6 +143,58 @@ fun MainScreen(viewModel: RedCassetteViewModel) {
                                 Icon(repeatIcon, contentDescription = "Repeat", tint = repeatTint, modifier = Modifier.size(28.dp))
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(32.dp))
+
+                        // Nút hiện danh sách chờ (Queue)
+                        IconButton(onClick = { showQueueBottomSheet = true }) {
+                            Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "Queue", tint = RedHoodCrimson, modifier = Modifier.size(32.dp))
+                        }
+                    }
+                }
+            }
+
+            // Giao diện Danh Sách Chờ (Queue)
+            if (showQueueBottomSheet) {
+                ModalBottomSheet(
+                    onDismissRequest = { showQueueBottomSheet = false },
+                    containerColor = RedHoodSurface
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Đang phát: ${currentPlaylistName}", color = RedHoodCrimson, fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(bottom = 16.dp))
+
+                        LazyColumn(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.6f)) {
+                            itemsIndexed(playbackList) { index, song ->
+                                val isCurrent = index == currentSongIndex
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (isCurrent) RedHoodCrimson.copy(alpha = 0.2f) else Color.Transparent)
+                                        .clickable {
+                                            viewModel.playSong(index)
+                                            showQueueBottomSheet = false
+                                        }
+                                        .padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = if (isCurrent) Icons.Default.PlayArrow else Icons.Default.MusicNote,
+                                        contentDescription = null,
+                                        tint = if (isCurrent) RedHoodCrimson else MetalGray,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(
+                                        text = song.title,
+                                        color = if (isCurrent) RedHoodCrimson else Color.White,
+                                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -142,7 +203,7 @@ fun MainScreen(viewModel: RedCassetteViewModel) {
 }
 
 @Composable
-fun CassetteTape(isPlaying: Boolean, labelBitmap: ImageBitmap?) {
+fun CassetteTape(isPlaying: Boolean, progress: Float, labelBitmap: ImageBitmap?) {
     val rotationAngle = remember { Animatable(0f) }
     LaunchedEffect(isPlaying) {
         if (isPlaying) while (true) rotationAngle.animateTo(targetValue = rotationAngle.value + 360f, animationSpec = tween(durationMillis = 4000, easing = LinearEasing))
@@ -151,12 +212,32 @@ fun CassetteTape(isPlaying: Boolean, labelBitmap: ImageBitmap?) {
     Box(modifier = Modifier.fillMaxWidth().aspectRatio(1.6f).clip(RoundedCornerShape(16.dp)).background(Brush.linearGradient(listOf(Color(0xFF2C2C2C), Color(0xFF111111)))).border(2.dp, MetalGray.copy(alpha = 0.5f), RoundedCornerShape(16.dp)), contentAlignment = Alignment.Center) {
         Box(modifier = Modifier.fillMaxWidth(0.85f).fillMaxHeight(0.65f).clip(RoundedCornerShape(8.dp)).background(Brush.verticalGradient(listOf(RedHoodCrimson.copy(alpha = 0.9f), RedHoodCrimson.copy(alpha = 0.5f)))), contentAlignment = Alignment.Center) {
             if (labelBitmap != null) { Image(bitmap = labelBitmap, contentDescription = "Cassette Label", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
-            Row(modifier = Modifier.fillMaxWidth(0.8f).fillMaxHeight(0.4f).clip(RoundedCornerShape(4.dp)).background(Color(0xFF0A0A0A)), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { CassetteReel(rotationAngle.value); CassetteReel(rotationAngle.value) }
+            Row(modifier = Modifier.fillMaxWidth(0.8f).fillMaxHeight(0.4f).clip(RoundedCornerShape(4.dp)).background(Color(0xFF0A0A0A)), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                CassetteReel(rotationAngle.value, spoolThickness = 0.3f + (progress * 0.4f))
+                CassetteReel(rotationAngle.value, spoolThickness = 0.3f + ((1f - progress) * 0.4f))
+            }
         }
         Canvas(modifier = Modifier.fillMaxSize()) {
             val radius = 6.dp.toPx(); val padding = 16.dp.toPx()
             drawCircle(Color.Black, radius, Offset(padding, padding)); drawCircle(Color.Black, radius, Offset(size.width - padding, padding))
             drawCircle(Color.Black, radius, Offset(padding, size.height - padding)); drawCircle(Color.Black, radius, Offset(size.width - padding, size.height - padding))
+        }
+    }
+}
+
+@Composable
+fun CassetteReel(rotationAngle: Float, spoolThickness: Float) {
+    Box(
+        modifier = Modifier.fillMaxHeight().aspectRatio(1f).padding(4.dp).clip(CircleShape).graphicsLayer { rotationZ = rotationAngle },
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val center = Offset(size.width / 2, size.height / 2)
+            drawCircle(color = Color(0xFF050505), radius = (size.width / 2) * spoolThickness)
+            drawCircle(Color(0xFFDDDDDD), size.width * 0.2f)
+            for (i in 0 until 6) {
+                drawArc(color = Color.Black, startAngle = (i * 60).toFloat(), sweepAngle = 20f, useCenter = true, topLeft = Offset(center.x - size.width * 0.2f, center.y - size.width * 0.2f), size = Size(size.width * 0.4f, size.width * 0.4f))
+            }
         }
     }
 }
@@ -197,6 +278,8 @@ fun SettingsScreen(viewModel: RedCassetteViewModel, onBack: () -> Unit) {
         }
 
         LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+
+            // --- TÙY CHỈNH GIAO DIỆN NỀN ---
             item {
                 Text("Giao diện", color = RedHoodCrimson, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -216,12 +299,14 @@ fun SettingsScreen(viewModel: RedCassetteViewModel, onBack: () -> Unit) {
                 Spacer(modifier = Modifier.height(24.dp))
             }
 
+            // --- TÙY CHỈNH THƯ MỤC ---
             item {
                 Text("Thư mục chứa nhạc (.mp3)", color = RedHoodCrimson, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
                 OutlinedButton(onClick = { folderLauncher.launch(null) }, modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, RedHoodCrimson)) { Text(if (rootFolderUri == null) "Chọn Folder Gốc" else "Đã chọn thư mục", color = Color.White) }
                 Spacer(modifier = Modifier.height(24.dp))
             }
 
+            // --- DANH SÁCH PLAYLIST ---
             item {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("Danh sách Playlist", color = RedHoodCrimson, fontWeight = FontWeight.Bold)
@@ -266,37 +351,5 @@ fun SettingsScreen(viewModel: RedCassetteViewModel, onBack: () -> Unit) {
             confirmButton = { Button(onClick = { if (playlistName.isNotBlank() && selectedSongsForPlaylist.isNotEmpty()) { if (playlistToEdit == null) viewModel.createPlaylist(playlistName, selectedSongsForPlaylist.toList()) else viewModel.updatePlaylist(playlistToEdit!!.id, selectedSongsForPlaylist.toList()); showCreatePlaylist = false } }, colors = ButtonDefaults.buttonColors(containerColor = RedHoodCrimson)) { Text("Lưu") } },
             dismissButton = { TextButton(onClick = { showCreatePlaylist = false }) { Text("Huỷ", color = MetalGray) } }
         )
-    }
-}
-@Composable
-fun CassetteReel(rotationAngle: Float) {
-    Box(
-        modifier = Modifier
-            .fillMaxHeight()
-            .aspectRatio(1f)
-            .padding(8.dp)
-            .clip(CircleShape)
-            .graphicsLayer { rotationZ = rotationAngle },
-        contentAlignment = Alignment.Center
-    ) {
-        // Nền tối của đĩa quay
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            drawCircle(Color.DarkGray)
-        }
-        // Trục lõi trắng và các rãnh đen
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            drawCircle(Color(0xFFEEEEEE), size.width * 0.2f)
-            val center = Offset(size.width / 2, size.height / 2)
-            for (i in 0 until 6) {
-                drawArc(
-                    color = Color.Black,
-                    startAngle = (i * 60).toFloat(),
-                    sweepAngle = 20f,
-                    useCenter = true,
-                    topLeft = Offset(center.x - size.width * 0.2f, center.y - size.width * 0.2f),
-                    size = Size(size.width * 0.4f, size.width * 0.4f)
-                )
-            }
-        }
     }
 }
