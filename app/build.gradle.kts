@@ -46,6 +46,7 @@ android {
 }
 
 dependencies {
+    implementation("androidx.compose.foundation:foundation:1.6.0")
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("io.coil-kt:coil-gif:2.6.0")
     implementation("androidx.media:media:1.7.0")

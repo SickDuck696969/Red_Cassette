@@ -10,12 +10,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -136,7 +136,7 @@ fun MainScreen(viewModel: RedCassetteViewModel) {
     val appBgUri by viewModel.appBackgroundUri.collectAsState()
     val cassetteLabelUri by viewModel.cassetteLabelUri.collectAsState()
     val playlistBgUri by viewModel.playlistBackgroundUri.collectAsState()
-
+    
     val themeColorInt by viewModel.appThemeColor.collectAsState()
     val themeColor = Color(themeColorInt)
 
@@ -167,33 +167,32 @@ fun MainScreen(viewModel: RedCassetteViewModel) {
                 SettingsScreen(viewModel, themeColor, onBack = { showSettings = false })
             } else {
                 Column(modifier = Modifier.fillMaxSize()) {
-
+                    
                     CenterAlignedTopAppBar(
-                        title = {
+                        title = { 
                             Text(
-                                text = currentPlaylistName ?: "Unknown",
-                                fontWeight = FontWeight.Bold,
+                                text = currentPlaylistName ?: "Unknown", 
+                                fontWeight = FontWeight.Bold, 
                                 color = Color.White,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
-                            )
+                            ) 
                         },
                         navigationIcon = {
                             IconButton(onClick = { showQueueBottomSheet = true }) {
                                 Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "Queue", tint = Color.White)
                             }
                         },
-                        actions = {
-                            IconButton(onClick = { showSettings = true }) {
-                                Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White)
-                            }
+                        actions = { 
+                            IconButton(onClick = { showSettings = true }) { 
+                                Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White) 
+                            } 
                         },
                         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent)
                     )
 
                     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
 
-                        // TRUYỀN THÊM SONG TITLE VÀ THEME COLOR VÀO CASSETTE
                         CassetteTape(isPlaying = isPlaying, labelBitmap = labelBitmap, songTitle = currentSongTitle, themeColor = themeColor)
 
                         Spacer(modifier = Modifier.height(48.dp))
@@ -224,14 +223,14 @@ fun MainScreen(viewModel: RedCassetteViewModel) {
             if (showQueueBottomSheet) {
                 ModalBottomSheet(
                     onDismissRequest = { showQueueBottomSheet = false },
-                    containerColor = RedHoodDark
+                    containerColor = RedHoodDark 
                 ) {
                     Box(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.7f)) {
                         if (playlistBgBitmap != null) {
                             Image(
-                                bitmap = playlistBgBitmap,
-                                contentDescription = "Playlist Background",
-                                contentScale = ContentScale.Crop,
+                                bitmap = playlistBgBitmap, 
+                                contentDescription = "Playlist Background", 
+                                contentScale = ContentScale.Crop, 
                                 modifier = Modifier.fillMaxSize(),
                                 alpha = 0.08f
                             )
@@ -239,40 +238,40 @@ fun MainScreen(viewModel: RedCassetteViewModel) {
 
                         Column(modifier = Modifier.padding(16.dp).fillMaxSize()) {
                             Text("Đang phát: ${currentPlaylistName}", color = themeColor, fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(bottom = 16.dp))
-
+                            
                             LazyColumn(modifier = Modifier.fillMaxSize()) {
                                 itemsIndexed(playbackList) { index, song ->
                                     val isCurrent = index == currentSongIndex
-
+                                    
                                     Column {
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .clip(RoundedCornerShape(8.dp))
                                                 .background(if (isCurrent) themeColor.copy(alpha = 0.3f) else Color.Transparent)
-                                                .clickable {
+                                                .clickable { 
                                                     viewModel.playSong(index)
-                                                    showQueueBottomSheet = false
+                                                    showQueueBottomSheet = false 
                                                 }
                                                 .padding(16.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Icon(
-                                                imageVector = if (isCurrent) Icons.Default.PlayArrow else Icons.Default.MusicNote,
-                                                contentDescription = null,
+                                                imageVector = if (isCurrent) Icons.Default.PlayArrow else Icons.Default.MusicNote, 
+                                                contentDescription = null, 
                                                 tint = if (isCurrent) themeColor else MetalGray,
                                                 modifier = Modifier.size(20.dp)
                                             )
                                             Spacer(modifier = Modifier.width(12.dp))
                                             Text(
-                                                text = song.title,
-                                                color = if (isCurrent) themeColor else Color.White,
+                                                text = song.title, 
+                                                color = if (isCurrent) themeColor else Color.White, 
                                                 fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                         }
-
+                                        
                                         if (index < playbackList.lastIndex) {
                                             HorizontalDivider(
                                                 modifier = Modifier.padding(horizontal = 12.dp),
@@ -313,7 +312,7 @@ fun CassetteTape(isPlaying: Boolean, labelBitmap: ImageBitmap?, songTitle: Strin
         Box(
             modifier = Modifier
                 .fillMaxWidth(0.88f)
-                .fillMaxHeight(0.75f)
+                .fillMaxHeight(0.75f) 
                 .align(Alignment.TopCenter)
                 .padding(top = 10.dp)
                 .clip(RoundedCornerShape(6.dp))
@@ -322,42 +321,40 @@ fun CassetteTape(isPlaying: Boolean, labelBitmap: ImageBitmap?, songTitle: Strin
             if (labelBitmap != null) {
                 Image(bitmap = labelBitmap, contentDescription = "Cassette Label", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             } else {
-                // Đổ chuẩn 100% màu chủ đạo làm nền cơ sở
                 Box(modifier = Modifier.fillMaxSize().background(themeColor))
-                // Phủ thêm Gradient ánh sáng: Nhạt (Trắng) bên trái -> Đậm (Đen) bên phải
                 Box(modifier = Modifier.fillMaxSize().background(
                     Brush.horizontalGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = 0.3f), // Sáng nhạt bên trái
-                            Color.Transparent,              // Giữ màu gốc ở giữa
-                            Color.Black.copy(alpha = 0.5f)  // Đậm tối bên phải
+                            Color.White.copy(alpha = 0.3f),
+                            Color.Transparent,
+                            Color.Black.copy(alpha = 0.5f)
                         )
                     )
                 ))
             }
 
-            // GIAO DIỆN TÊN BÀI HÁT (Giấy nhớ)
+            // GIAO DIỆN TÊN BÀI HÁT (Giấy nhớ trong suốt mờ)
             Box(
                 modifier = Modifier
                     .fillMaxWidth(0.82f)
                     .align(Alignment.TopCenter)
                     .padding(top = 8.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color(0xFFE0C9A3)) // Màu giấy ngà vintage
-                    .border(1.dp, Color(0xFFBCA680), RoundedCornerShape(2.dp))
+                    // Thêm copy(alpha = 0.75f) để làm giấy dán trong suốt 75%
+                    .background(Color(0xFFE0C9A3).copy(alpha = 0.4f))
+                    // Làm mờ luôn cả viền của giấy dán
+                    .border(1.dp, Color(0xFFBCA680).copy(alpha = 0.5f), RoundedCornerShape(2.dp))
                     .padding(horizontal = 8.dp, vertical = 2.dp),
                 contentAlignment = Alignment.Center
             ) {
-                // THÊM HIỆU ỨNG basicMarquee CHỮ CHẠY TẠI ĐÂY
                 Text(
                     text = songTitle,
-                    modifier = Modifier.basicMarquee(),
-                    color = Color(0xFF2A2A2A),
+                    modifier = Modifier.basicMarquee(), 
+                    color = Color(0xFF2A2A2A), 
                     fontWeight = FontWeight.Bold,
                     fontStyle = FontStyle.Italic,
-                    fontSize = 12.sp,
+                    fontSize = 12.sp, 
                     maxLines = 1
-                    // Đã bỏ TextOverflow.Ellipsis để chữ có thể trượt
                 )
             }
 
@@ -372,11 +369,10 @@ fun CassetteTape(isPlaying: Boolean, labelBitmap: ImageBitmap?, songTitle: Strin
                 }
             }
 
-            // CỬA SỔ KÍNH
             Box(
                 modifier = Modifier
                     .fillMaxWidth(0.72f)
-                    .fillMaxHeight(0.40f)
+                    .fillMaxHeight(0.40f) 
                     .align(Alignment.Center)
                     .clip(RoundedCornerShape(6.dp))
                     .background(Color(0xFF121212))
@@ -385,9 +381,9 @@ fun CassetteTape(isPlaying: Boolean, labelBitmap: ImageBitmap?, songTitle: Strin
             ) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     drawLine(
-                        color = Color(0xFF221A1A),
-                        start = Offset(0f, size.height / 2),
-                        end = Offset(size.width, size.height / 2),
+                        color = Color(0xFF221A1A), 
+                        start = Offset(0f, size.height / 2), 
+                        end = Offset(size.width, size.height / 2), 
                         strokeWidth = 14.dp.toPx()
                     )
                 }
@@ -416,7 +412,7 @@ fun CassetteTape(isPlaying: Boolean, labelBitmap: ImageBitmap?, songTitle: Strin
         Canvas(modifier = Modifier.fillMaxSize()) {
             val padding = 16.dp.toPx()
             val screwRadius = 4.5.dp.toPx()
-
+            
             val screws = listOf(
                 Offset(padding, padding),
                 Offset(size.width - padding, padding),
@@ -458,7 +454,7 @@ fun CassetteReel(rotationAngle: Float) {
             val plasticHubRadius = size.width * 0.22f
             val innerHoleRadius = size.width * 0.12f
 
-            drawCircle(color = Color(0xFF1C1311), radius = tapeRadius)
+            drawCircle(color = Color(0xFF1C1311), radius = tapeRadius) 
             drawCircle(color = Color(0xFF2D201E), radius = tapeRadius, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
 
             drawCircle(color = Color(0xFFE5E5E5), radius = plasticHubRadius)
@@ -546,15 +542,15 @@ fun SettingsScreen(viewModel: RedCassetteViewModel, themeColor: Color, onBack: (
 
             item {
                 Text("Giao diện", color = themeColor, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
-
+                
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     OutlinedButton(onClick = { appBgLauncher.launch(arrayOf("image/*")) }, border = BorderStroke(1.dp, themeColor), modifier = Modifier.weight(1f)) {
-                        Text(if (appBgUri == null) "Tải Nền Ứng dụng" else "Đổi Nền", color = Color.White)
+                        Text(if (appBgUri == null) "Tải Nền Ứng dụng" else "Đổi Nền Ứng dụng", color = Color.White)
                     }
                     if (appBgUri != null) { Spacer(modifier = Modifier.width(8.dp)); Button(onClick = { viewModel.setAppBackground(null) }, colors = ButtonDefaults.buttonColors(containerColor = themeColor)) { Text("Xoá") } }
                 }
                 Spacer(modifier = Modifier.height(12.dp))
-
+                
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     OutlinedButton(onClick = { playlistBgLauncher.launch(arrayOf("image/*")) }, border = BorderStroke(1.dp, themeColor), modifier = Modifier.weight(1f)) {
                         Text(if (playlistBgUri == null) "Tải Nền Danh sách nhạc" else "Đổi Nền Danh sách", color = Color.White)
